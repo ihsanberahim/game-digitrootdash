@@ -1,6 +1,6 @@
 import React from 'react';
-import { Settings, X, Volume2, VolumeX, Smartphone, RotateCcw, Palette } from 'lucide-react';
-import { GameSettings } from '../types';
+import { GameSettings, GameTheme } from '../types';
+import { Sheet, SheetButton } from './Sheet';
 
 interface SettingsModalProps {
   settings: GameSettings;
@@ -9,151 +9,158 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
+const THEMES: Array<{ id: GameTheme; name: string; note: string }> = [
+  { id: 'board', name: 'Slate board', note: 'Chalk on dark green-black' },
+  { id: 'paper', name: 'Ledger paper', note: 'Ink on warm paper' },
+  { id: 'led', name: 'Race clock', note: 'Maximum contrast' },
+];
+
+function Choice<T extends number | string>({
+  options,
+  active,
+  onSelect,
+}: {
+  options: Array<{ value: T; label: string }>;
+  active: T;
+  onSelect: (value: T) => void;
+}) {
+  return (
+    <div className="flex gap-1.5">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          onClick={() => onSelect(option.value)}
+          aria-pressed={active === option.value}
+          className={`flex-1 rounded-sharp border py-1.5 font-num text-xs transition ${
+            active === option.value
+              ? 'border-chalk bg-key text-chalk'
+              : 'border-rule text-dim hover:text-chalk'
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onUpdateSettings,
   onResetStats,
   onClose,
 }) => {
+  const update = (patch: Partial<GameSettings>) =>
+    onUpdateSettings({ ...settings, ...patch });
+
   return (
-    <div className="fixed inset-0 bg-[#0a0a0f]/80 backdrop-blur-xl flex items-center justify-center p-4 z-50">
-      <div className="bg-white/5 backdrop-blur-2xl border border-white/10 w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
-        <div className="flex justify-between items-center border-b border-white/10 pb-3">
-          <div className="flex items-center space-x-2 text-slate-200 font-bold text-base">
-            <Settings size={20} className="text-sky-300" />
-            <span>Settings</span>
-          </div>
+    <Sheet
+      title="Settings"
+      onClose={onClose}
+      footer={
+        <SheetButton variant="primary" onClick={onClose}>
+          Done
+        </SheetButton>
+      }
+    >
+      <section>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-chalk">Sound</span>
           <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition"
+            role="switch"
+            aria-checked={settings.soundEnabled}
+            aria-label="Sound"
+            onClick={() => update({ soundEnabled: !settings.soundEnabled })}
+            className={`flex h-5 w-9 items-center rounded-full border p-0.5 transition-colors ${
+              settings.soundEnabled ? 'border-race bg-race/25' : 'border-rule'
+            }`}
           >
-            <X size={18} />
+            <span
+              className={`block h-3.5 w-3.5 rounded-full transition-transform ${
+                settings.soundEnabled ? 'translate-x-4 bg-race' : 'bg-dim'
+              }`}
+            />
           </button>
         </div>
 
-        <div className="space-y-4 text-xs text-slate-300">
-          {/* Audio Settings */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-slate-200 flex items-center space-x-1.5">
-                {settings.soundEnabled ? <Volume2 size={16} className="text-sky-300" /> : <VolumeX size={16} className="text-slate-500" />}
-                <span>Sound Effects</span>
-              </span>
-              <input
-                type="checkbox"
-                checked={settings.soundEnabled}
-                onChange={(e) => onUpdateSettings({ ...settings, soundEnabled: e.target.checked })}
-                className="w-4 h-4 accent-sky-500 rounded cursor-pointer"
-              />
-            </div>
-
-            {settings.soundEnabled && (
-              <div className="flex items-center space-x-3 bg-white/5 p-2.5 rounded-xl border border-white/10 backdrop-blur-md">
-                <span className="text-[10px] uppercase font-mono text-slate-400">Vol</span>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="1"
-                  step="0.1"
-                  value={settings.soundVolume}
-                  onChange={(e) => onUpdateSettings({ ...settings, soundVolume: parseFloat(e.target.value) })}
-                  className="w-full accent-sky-500 cursor-pointer"
-                />
-              </div>
-            )}
+        {settings.soundEnabled && (
+          <div className="mt-3 flex items-center gap-3">
+            <span className="label">Volume</span>
+            <input
+              type="range"
+              min="0.1"
+              max="1"
+              step="0.1"
+              aria-label="Volume"
+              value={settings.soundVolume}
+              onChange={(e) => update({ soundVolume: parseFloat(e.target.value) })}
+              style={{ accentColor: 'var(--race)' }}
+              className="w-full cursor-pointer"
+            />
           </div>
+        )}
+      </section>
 
-          {/* Timed Attack Duration */}
-          <div className="space-y-1.5 border-t border-white/10 pt-3">
-            <label className="font-bold text-slate-200 block">Timed Attack Duration</label>
-            <div className="grid grid-cols-3 gap-2">
-              {[30, 60, 90].map((dur) => (
-                <button
-                  key={dur}
-                  onClick={() => onUpdateSettings({ ...settings, timerDuration: dur })}
-                  className={`py-2 rounded-xl text-xs font-bold transition border ${
-                    settings.timerDuration === dur
-                      ? 'bg-sky-500 text-white border-sky-400 font-extrabold shadow-md'
-                      : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {dur}s
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Sprint Target */}
-          <div className="space-y-1.5 border-t border-white/10 pt-3">
-            <label className="font-bold text-slate-200 block">Sprint Target Problems</label>
-            <div className="grid grid-cols-3 gap-2">
-              {[10, 20, 50].map((count) => (
-                <button
-                  key={count}
-                  onClick={() => onUpdateSettings({ ...settings, sprintTarget: count })}
-                  className={`py-2 rounded-xl text-xs font-bold transition border ${
-                    settings.sprintTarget === count
-                      ? 'bg-emerald-500 text-white border-emerald-400 font-extrabold shadow-md'
-                      : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {count} Problems
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Theme Palette */}
-          <div className="space-y-1.5 border-t border-white/10 pt-3">
-            <label className="font-bold text-slate-200 block flex items-center space-x-1.5">
-              <Palette size={14} className="text-purple-300" />
-              <span>Theme Appearance</span>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { id: 'dark', label: 'Frosted Glass' },
-                { id: 'neon', label: 'Cyber Neon' },
-                { id: 'midnight', label: 'Midnight Blue' },
-                { id: 'light', label: 'Slate Dark' },
-              ].map((themeItem) => (
-                <button
-                  key={themeItem.id}
-                  onClick={() => onUpdateSettings({ ...settings, theme: themeItem.id as any })}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold transition border text-left ${
-                    settings.theme === themeItem.id
-                      ? 'bg-purple-500 text-white border-purple-400 shadow-md shadow-purple-500/20'
-                      : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {themeItem.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Reset Stats */}
-          <div className="border-t border-white/10 pt-3">
-            <button
-              onClick={() => {
-                if (confirm('Are you sure you want to reset all game statistics and high scores?')) {
-                  onResetStats();
-                }
-              }}
-              className="w-full py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/30 font-bold transition text-xs flex items-center justify-center space-x-1.5 backdrop-blur-md"
-            >
-              <RotateCcw size={14} />
-              <span>Reset Statistics</span>
-            </button>
-          </div>
+      <section className="mt-6">
+        <span className="label">Timed run length</span>
+        <div className="mt-2">
+          <Choice
+            options={[30, 60, 90].map((value) => ({ value, label: `${value}s` }))}
+            active={settings.timerDuration}
+            onSelect={(value) => update({ timerDuration: value })}
+          />
         </div>
+      </section>
 
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/10 font-bold text-slate-200 transition text-xs backdrop-blur-md"
+      <section className="mt-6">
+        <span className="label">Sprint length</span>
+        <div className="mt-2">
+          <Choice
+            options={[10, 20, 50].map((value) => ({ value, label: `${value} roots` }))}
+            active={settings.sprintTarget}
+            onSelect={(value) => update({ sprintTarget: value })}
+          />
+        </div>
+      </section>
+
+      <section className="mt-6">
+        <span className="label">Surface</span>
+        <div className="mt-2 divide-y divide-rule border-y border-rule">
+          {THEMES.map((theme) => (
+            <button
+              key={theme.id}
+              onClick={() => update({ theme: theme.id })}
+              aria-pressed={settings.theme === theme.id}
+              className="flex w-full items-center justify-between py-2.5 text-left"
+            >
+              <span>
+                <span
+                  className={`block text-sm ${
+                    settings.theme === theme.id ? 'text-chalk' : 'text-dim'
+                  }`}
+                >
+                  {theme.name}
+                </span>
+                <span className="block text-xs text-dim">{theme.note}</span>
+              </span>
+              {settings.theme === theme.id && (
+                <span className="label text-race">Active</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-6">
+        <SheetButton
+          variant="danger"
+          onClick={() => {
+            if (confirm('Reset every record and run history?')) onResetStats();
+          }}
         >
-          Done
-        </button>
-      </div>
-    </div>
+          Reset records
+        </SheetButton>
+      </section>
+    </Sheet>
   );
 };

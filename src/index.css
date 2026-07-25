@@ -1,5 +1,87 @@
 @import "tailwindcss";
 
+/*
+  Digit Root Dash — ink-board palette.
+  Themes are materials, not tints: a chalked slate, a ledger page, a race clock.
+  Theme vars live on <html> so @theme aliases below resolve against the active set.
+*/
+:root {
+  --ink: #0e1110;
+  --ink-raise: #161a18;
+  --ink-key: #1c211f;
+  --rule: #2b312e;
+  --chalk: #f4f7f2;
+  --chalk-dim: #8b948d;
+  --strike: #c45c26;
+  --alive: #3d9b7a;
+  --race: #e6b84d;
+  --grain: rgba(244, 247, 242, 0.045);
+}
+
+[data-theme="paper"] {
+  --ink: #e8e4d9;
+  --ink-raise: #ded9ca;
+  --ink-key: #d5cfbd;
+  --rule: #b8b09d;
+  --chalk: #1b1d19;
+  --chalk-dim: #6b6858;
+  --strike: #a8431a;
+  --alive: #2c6e54;
+  --race: #8a5d0c;
+  --grain: rgba(27, 29, 25, 0.07);
+}
+
+[data-theme="led"] {
+  --ink: #000000;
+  --ink-raise: #0b0b0b;
+  --ink-key: #141414;
+  --rule: #2e2e2e;
+  --chalk: #ffffff;
+  --chalk-dim: #767676;
+  --strike: #ff5c1a;
+  --alive: #20e39b;
+  --race: #ffd21e;
+  --grain: rgba(255, 255, 255, 0.05);
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-raise: var(--ink-raise);
+  --color-key: var(--ink-key);
+  --color-rule: var(--rule);
+  --color-chalk: var(--chalk);
+  --color-dim: var(--chalk-dim);
+  --color-strike: var(--strike);
+  --color-alive: var(--alive);
+  --color-race: var(--race);
+
+  --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+  --font-num: "Azeret Mono", ui-monospace, monospace;
+  --font-ui: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sharp: 3px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--ink);
+  color: var(--chalk);
+  font-family: var(--font-ui);
+  /* Ruled surface: the board this game is played on. */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--grain) 0px,
+    var(--grain) 1px,
+    transparent 1px,
+    transparent 34px
+  );
+}
+
 @layer utilities {
   .no-select {
     -webkit-touch-callout: none;
@@ -14,24 +96,55 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+  /* Digits must never reflow while counting. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
 }
 
-body {
-  background-color: #0a0a0f;
-  color: #e2e8f0;
+/* Component layer so Tailwind utilities can still override colour and casing. */
+@layer components {
+  .label {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--chalk-dim);
+  }
+  .wordmark {
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    line-height: 0.86;
+    text-transform: uppercase;
+  }
 }
 
-/* Custom scrollbar styling for frosted glass containers */
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--race);
+  outline-offset: 2px;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(10, 10, 15, 0.6);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 9999px;
+  background: var(--rule);
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

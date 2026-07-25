@@ -1,34 +1,70 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Flame, Heart, Lightbulb, RotateCcw, Eye, EyeOff, Zap } from 'lucide-react';
-import { GameMode, GameDifficulty, GameSettings, StepBreakdown } from '../types';
-import { computeDigitalRoot, generateRandomNumber, getDigitCountForProgression, getStepByStepBreakdown } from '../utils/math';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  GameMode,
+  GameDifficulty,
+  GameSettings,
+  GameSessionResult,
+  StepBreakdown,
+} from '../types';
+import {
+  computeDigitalRoot,
+  generateRandomNumber,
+  getDigitCountForProgression,
+  getStepByStepBreakdown,
+} from '../utils/math';
 import { soundFx } from '../utils/audio';
-import { motion, AnimatePresence } from 'motion/react';
+import {
+  calculateTimeTaken,
+  shouldFinishOnQuit,
+  shouldHandleGameKey,
+} from '../utils/game';
+import { DigitStrip, RootLine } from './DigitStrip';
 
 interface GameBoardProps {
   mode: GameMode;
   difficulty?: GameDifficulty;
   settings: GameSettings;
-  onFinishGame: (result: {
-    score: number;
-    solved: number;
-    totalAttempts: number;
-    maxStreak: number;
-    timeTaken: number;
-  }) => void;
+  gameEnded?: boolean;
+  inputLocked?: boolean;
+  onFinishGame: (result: GameSessionResult) => void;
   onQuit: () => void;
   onOpenHint: (breakdown: StepBreakdown) => void;
+}
+
+const RESOLVE_MS = 340;
+
+const KEY_CLASS =
+  'rounded-sharp border border-rule bg-key font-num text-2xl font-bold tnum text-chalk transition-colors hover:border-chalk active:bg-chalk active:text-ink';
+
+const FEEDBACK_TONE: Record<'neutral' | 'correct' | 'wrong', string> = {
+  neutral: 'text-dim',
+  correct: 'text-alive',
+  wrong: 'text-strike',
+};
+
+function formatClock(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}`;
+}
+
+function shakeOffset(shake: number): number | number[] {
+  if (shake === 0) return 0;
+  if (shake % 2 === 0) return [0, -8, 8, -5, 5, 0];
+  return [0, 8, -8, 5, -5, 0];
 }
 
 export const GameBoard: React.FC<GameBoardProps> = ({
   mode,
   difficulty = 'medium',
   settings,
+  gameEnded = false,
+  inputLocked = false,
   onFinishGame,
   onQuit,
   onOpenHint,
 }) => {
-  // Game state
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [maxStreak, setMaxStreak] = useState(0);
@@ -36,381 +72,355 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   const [totalAttempts, setTotalAttempts] = useState(0);
   const [lives, setLives] = useState(3);
 
-  // Timers
   const [timeRemaining, setTimeRemaining] = useState(
-    mode === 'timed' ? settings.timerDuration : 0
+    mode === 'timed' ? settings.timerDuration : 0,
   );
   const [elapsedTime, setElapsedTime] = useState(0);
 
-  // Current problem state
   const [currentNumber, setCurrentNumber] = useState('');
   const [targetRoot, setTargetRoot] = useState(0);
   const [stepBreakdown, setStepBreakdown] = useState<StepBreakdown | null>(null);
 
-  // UI state
-  const [showCastingOut, setShowCastingOut] = useState(false);
-  const [feedbackMsg, setFeedbackMsg] = useState('Tap the single-digit answer below (0–9)');
-  const [feedbackType, setFeedbackType] = useState<'neutral' | 'correct' | 'wrong'>('neutral');
-  const [floatingPops, setFloatingPops] = useState<Array<{ id: number; text: string; color: string }>>([]);
-  const [cardStatus, setCardStatus] = useState<'idle' | 'correct' | 'wrong'>('idle');
+  const [assist, setAssist] = useState(false);
+  const [phase, setPhase] = useState<'solving' | 'resolved'>('solving');
+  const [feedback, setFeedback] = useState('Tap the single-digit root');
+  const [feedbackTone, setFeedbackTone] = useState<'neutral' | 'correct' | 'wrong'>(
+    'neutral',
+  );
+  const [pops, setPops] = useState<Array<{ id: number; text: string; tone: string }>>(
+    [],
+  );
+  const [wrongShake, setWrongShake] = useState(0);
+  const hasFinishedRef = useRef(false);
 
-  // Generate new number
-  const spawnNumber = useCallback(() => {
-    const digitCount = getDigitCountForProgression(solvedCount, difficulty);
-    const numStr = generateRandomNumber(digitCount);
-    const root = computeDigitalRoot(numStr);
-    const breakdown = getStepByStepBreakdown(numStr);
+  const spawnNumber = useCallback(
+    (solved: number) => {
+      const digitCount = getDigitCountForProgression(solved, difficulty);
+      const numStr = generateRandomNumber(digitCount);
+      setCurrentNumber(numStr);
+      setTargetRoot(computeDigitalRoot(numStr));
+      setStepBreakdown(getStepByStepBreakdown(numStr));
+      setPhase('solving');
+      setFeedback('Tap the single-digit root');
+      setFeedbackTone('neutral');
+    },
+    [difficulty],
+  );
 
-    setCurrentNumber(numStr);
-    setTargetRoot(root);
-    setStepBreakdown(breakdown);
-    setFeedbackMsg('Tap the single-digit answer below');
-    setFeedbackType('neutral');
-    setCardStatus('idle');
-  }, [solvedCount, difficulty]);
-
-  // Initial spawn
   useEffect(() => {
-    spawnNumber();
+    spawnNumber(0);
   }, [spawnNumber]);
 
-  // Timers Loop
+  const finishCurrentGame = useCallback(() => {
+    if (hasFinishedRef.current) return;
+    hasFinishedRef.current = true;
+    soundFx.playFanfare();
+    onFinishGame({
+      score,
+      solved: solvedCount,
+      totalAttempts,
+      maxStreak,
+      timeTaken: calculateTimeTaken(
+        mode,
+        settings.timerDuration,
+        timeRemaining,
+        elapsedTime,
+      ),
+    });
+  }, [
+    mode,
+    settings.timerDuration,
+    timeRemaining,
+    elapsedTime,
+    score,
+    solvedCount,
+    totalAttempts,
+    maxStreak,
+    onFinishGame,
+  ]);
+
+  // Interval reads the latest finisher through a ref to avoid stale score.
+  const finishRef = useRef(finishCurrentGame);
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    finishRef.current = finishCurrentGame;
+  }, [finishCurrentGame]);
+
+  useEffect(() => {
+    if (gameEnded) return;
 
     if (mode === 'timed') {
-      interval = setInterval(() => {
+      const interval = setInterval(() => {
         setTimeRemaining((prev) => {
           if (prev <= 1) {
-            clearInterval(interval!);
-            finishCurrentGame();
+            clearInterval(interval);
+            finishRef.current();
             return 0;
           }
           if (prev <= 10) soundFx.playTick(true);
           return prev - 1;
         });
       }, 1000);
-    } else if (mode === 'sprint' || mode === 'survival' || mode === 'zen') {
-      interval = setInterval(() => {
-        setElapsedTime((prev) => prev + 1);
-      }, 1000);
+      return () => clearInterval(interval);
     }
 
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [mode]);
+    const interval = setInterval(() => setElapsedTime((prev) => prev + 1), 1000);
+    return () => clearInterval(interval);
+  }, [gameEnded, mode]);
 
-  const finishCurrentGame = useCallback(() => {
-    soundFx.playFanfare();
-    const timeTaken = mode === 'timed' ? settings.timerDuration - timeRemaining : elapsedTime;
-    onFinishGame({
-      score,
-      solved: solvedCount,
-      totalAttempts,
-      maxStreak,
-      timeTaken,
-    });
-  }, [mode, settings.timerDuration, timeRemaining, elapsedTime, score, solvedCount, totalAttempts, maxStreak, onFinishGame]);
-
-  // Floating text trigger
-  const triggerPop = (text: string, color: string) => {
+  function triggerPop(text: string, tone: string) {
     const id = Date.now() + Math.random();
-    setFloatingPops((prev) => [...prev, { id, text, color }]);
-    setTimeout(() => {
-      setFloatingPops((prev) => prev.filter((p) => p.id !== id));
-    }, 1000);
-  };
+    setPops((prev) => [...prev, { id, text, tone }]);
+    setTimeout(() => setPops((prev) => prev.filter((p) => p.id !== id)), 900);
+  }
 
-  // Submit Answer handler
+  const quitOrEnd = useCallback(() => {
+    if (shouldFinishOnQuit(mode)) finishRef.current();
+    else onQuit();
+  }, [mode, onQuit]);
+
   const handleAnswer = useCallback(
     (digit: number) => {
+      if (phase === 'resolved') return;
       setTotalAttempts((prev) => prev + 1);
 
       if (digit === targetRoot) {
-        // Correct!
         const newStreak = streak + 1;
         setStreak(newStreak);
-        if (newStreak > maxStreak) setMaxStreak(newStreak);
+        setMaxStreak((prev) => Math.max(prev, newStreak));
 
-        const streakBonus = Math.min(newStreak * 20, 100);
-        const addedScore = 100 + streakBonus;
+        const addedScore = 100 + Math.min(newStreak * 20, 100);
         setScore((prev) => prev + addedScore);
-
         const newSolved = solvedCount + 1;
         setSolvedCount(newSolved);
 
-        // Audio & Visual FX
         if (newStreak > 1 && newStreak % 3 === 0) {
           soundFx.playCombo();
-          triggerPop(`${newStreak}x COMBO! 🔥`, 'text-amber-400 font-extrabold');
+          triggerPop(`${newStreak}× combo`, 'text-race');
         } else {
           soundFx.playCorrect(newStreak);
         }
-
         soundFx.triggerHaptics(40);
-        setCardStatus('correct');
-        setFeedbackMsg(`Correct! +${addedScore} pts`);
-        setFeedbackType('correct');
-        triggerPop(`+${addedScore}`, 'text-emerald-400 font-bold');
+        triggerPop(`+${addedScore}`, 'text-alive');
 
-        // Check Sprint mode win condition
+        setPhase('resolved');
+        setFeedback(`Cast out — root ${targetRoot}`);
+        setFeedbackTone('correct');
+
         if (mode === 'sprint' && newSolved >= settings.sprintTarget) {
-          setTimeout(() => {
-            finishCurrentGame();
-          }, 300);
+          setTimeout(() => finishRef.current(), RESOLVE_MS);
           return;
         }
+        setTimeout(() => spawnNumber(newSolved), RESOLVE_MS);
+        return;
+      }
 
-        // Spawn next problem
-        setTimeout(() => {
-          spawnNumber();
-        }, 150);
-      } else {
-        // Incorrect!
-        setStreak(0);
-        soundFx.playWrong();
-        soundFx.triggerHaptics([80, 50, 80]);
-        setCardStatus('wrong');
-        setFeedbackMsg(`Incorrect! Try again.`);
-        setFeedbackType('wrong');
-        triggerPop(`Wrong!`, 'text-rose-400 font-bold');
+      setStreak(0);
+      soundFx.playWrong();
+      soundFx.triggerHaptics([80, 50, 80]);
+      setWrongShake((n) => n + 1);
+      setFeedback('Not the root — keep reducing');
+      setFeedbackTone('wrong');
 
-        if (mode === 'survival') {
-          const newLives = lives - 1;
-          setLives(newLives);
-          if (newLives <= 0) {
-            setTimeout(() => {
-              finishCurrentGame();
-            }, 400);
-            return;
-          }
+      if (mode === 'survival') {
+        const newLives = lives - 1;
+        setLives(newLives);
+        if (newLives <= 0) {
+          setPhase('resolved');
+          setTimeout(() => finishRef.current(), 500);
         }
-
-        setTimeout(() => {
-          setCardStatus('idle');
-        }, 400);
       }
     },
-    [targetRoot, streak, maxStreak, solvedCount, mode, settings.sprintTarget, lives, spawnNumber, finishCurrentGame]
+    [
+      phase,
+      targetRoot,
+      streak,
+      solvedCount,
+      mode,
+      settings.sprintTarget,
+      lives,
+      spawnNumber,
+    ],
   );
 
-  // Keyboard shortcut listener
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(e.key)) {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!shouldHandleGameKey(e.key, e.repeat, inputLocked)) return;
+      if (/^[0-9]$/.test(e.key)) {
         handleAnswer(parseInt(e.key, 10));
-      } else if (e.key === 'h' || e.key === 'H') {
+      } else if (e.key.toLowerCase() === 'h') {
         if (stepBreakdown) onOpenHint(stepBreakdown);
       } else if (e.key === 'Escape') {
-        onQuit();
+        quitOrEnd();
       }
     };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleAnswer, inputLocked, stepBreakdown, onOpenHint, quitOrEnd]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleAnswer, stepBreakdown, onOpenHint, onQuit]);
+  const resolved = phase === 'resolved' && feedbackTone === 'correct';
+  const struck =
+    (assist || resolved) && stepBreakdown
+      ? stepBreakdown.castingOutNines.cancelledDigits
+      : [];
 
-  // Render numbers with optional "Casting Out 9s" highlight
-  const renderNumberDigits = () => {
-    if (!showCastingOut || !stepBreakdown) {
-      return (
-        <span className="text-4xl sm:text-5xl font-black text-white tracking-widest font-mono break-all">
-          {currentNumber}
-        </span>
-      );
-    }
-
-    const { cancelledDigits } = stepBreakdown.castingOutNines;
-
-    return (
-      <div className="flex flex-wrap justify-center gap-1 my-1">
-        {currentNumber.split('').map((char, idx) => {
-          const isCancelled = cancelledDigits.includes(idx);
-          return (
-            <span
-              key={idx}
-              className={`text-3xl sm:text-4xl font-mono font-black transition-all duration-300 px-1 rounded ${
-                isCancelled
-                  ? 'text-slate-600 line-through opacity-40 bg-slate-900/40 scale-90'
-                  : 'text-amber-300 bg-amber-500/10 border border-amber-500/30'
-              }`}
-            >
-              {char}
-            </span>
-          );
-        })}
-      </div>
-    );
-  };
+  const digitSize =
+    currentNumber.length > 8
+      ? 'text-[clamp(1.75rem,9vw,2.5rem)]'
+      : 'text-[clamp(2.5rem,13vw,3.75rem)]';
 
   return (
-    <div className="w-full max-w-md mx-auto flex-1 flex flex-col justify-between py-2 space-y-4 relative">
-      {/* HUD Bar */}
-      <div className="w-full flex justify-between items-center bg-white/5 backdrop-blur-xl p-3 rounded-2xl border border-white/10 shadow-lg">
-        {mode === 'survival' ? (
-          <div className="text-left">
-            <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Lives</span>
-            <div className="flex space-x-1 mt-0.5">
-              {[1, 2, 3].map((heartIdx) => (
-                <Heart
-                  key={heartIdx}
-                  size={18}
-                  className={heartIdx <= lives ? 'fill-rose-500 text-rose-500 animate-pulse' : 'text-slate-600'}
+    <div className="flex flex-1 flex-col">
+      <div className="flex items-end justify-between border-b border-rule pb-2">
+        {mode === 'sprint' ? (
+          <div>
+            <span className="label">Solved</span>
+            <div className="font-num text-2xl font-bold tnum text-chalk">
+              {solvedCount}
+              <span className="text-dim">/{settings.sprintTarget}</span>
+            </div>
+          </div>
+        ) : mode === 'survival' ? (
+          <div>
+            <span className="label">Lives</span>
+            <div className="mt-1 flex gap-1.5" aria-label={`${lives} lives left`}>
+              {[1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  className={`block h-3 w-3 border ${
+                    i <= lives ? 'border-chalk bg-chalk' : 'border-rule'
+                  }`}
                 />
               ))}
             </div>
           </div>
         ) : (
-          <div className="text-left">
-            <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Score</span>
-            <span className="text-2xl font-black text-sky-300 font-mono">{score}</span>
+          <div>
+            <span className="label">Score</span>
+            <div className="font-num text-2xl font-bold tnum text-chalk">{score}</div>
           </div>
         )}
 
         <div className="text-center">
           {mode === 'timed' && (
-            <div>
-              <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Timer</span>
-              <span
-                className={`text-2xl font-black font-mono transition-colors ${
-                  timeRemaining <= 10 ? 'text-rose-400 animate-pulse' : 'text-emerald-300'
+            <>
+              <span className="label">Left</span>
+              <div
+                className={`font-num text-2xl font-bold tnum ${
+                  timeRemaining <= 10 ? 'text-strike' : 'text-chalk'
                 }`}
               >
-                {timeRemaining}s
-              </span>
-            </div>
+                {formatClock(timeRemaining)}
+              </div>
+            </>
           )}
           {mode === 'sprint' && (
-            <div>
-              <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">
-                Solved ({solvedCount}/{settings.sprintTarget})
-              </span>
-              <span className="text-2xl font-black text-emerald-300 font-mono">{elapsedTime}s</span>
-            </div>
+            <>
+              <span className="label">Elapsed</span>
+              <div className="font-num text-2xl font-bold tnum text-chalk">
+                {formatClock(elapsedTime)}
+              </div>
+            </>
           )}
           {(mode === 'survival' || mode === 'zen') && (
-            <div>
-              <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Solved</span>
-              <span className="text-2xl font-black text-purple-300 font-mono">{solvedCount}</span>
-            </div>
+            <>
+              <span className="label">Solved</span>
+              <div className="font-num text-2xl font-bold tnum text-chalk">
+                {solvedCount}
+              </div>
+            </>
           )}
         </div>
 
         <div className="text-right">
-          <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Streak</span>
-          <div className="flex items-center justify-end space-x-1">
-            <span className="text-2xl font-black text-amber-300 font-mono">{streak}</span>
-            <Flame size={18} className={streak > 0 ? 'text-amber-400 fill-amber-400 animate-bounce' : 'text-slate-600'} />
+          <span className="label">Streak</span>
+          <div
+            className={`font-num text-2xl font-bold tnum ${
+              streak > 0 ? 'text-race' : 'text-dim'
+            }`}
+          >
+            {streak}×
           </div>
         </div>
       </div>
 
-      {/* Floating Pops Container */}
-      <div className="absolute top-16 left-0 right-0 pointer-events-none flex flex-col items-center z-20">
-        <AnimatePresence>
-          {floatingPops.map((pop) => (
-            <motion.div
-              key={pop.id}
-              initial={{ opacity: 1, y: 0, scale: 0.8 }}
-              animate={{ opacity: 0, y: -40, scale: 1.2 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.8 }}
-              className={`text-lg font-mono ${pop.color} drop-shadow-md`}
-            >
-              {pop.text}
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+      <div className="relative flex flex-1 flex-col items-center justify-center">
+        <div className="pointer-events-none absolute top-[22%] z-20 flex flex-col items-center">
+          <AnimatePresence>
+            {pops.map((pop) => (
+              <motion.span
+                key={pop.id}
+                initial={{ opacity: 1, y: 0 }}
+                animate={{ opacity: 0, y: -28 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.8 }}
+                className={`font-num text-sm font-bold ${pop.tone}`}
+              >
+                {pop.text}
+              </motion.span>
+            ))}
+          </AnimatePresence>
+        </div>
 
-      {/* Active Number Display Card */}
-      <div className="flex-1 flex flex-col items-center justify-center relative min-h-[180px]">
         <motion.div
-          animate={
-            cardStatus === 'correct'
-              ? { scale: [1, 1.04, 1], borderColor: '#10b981' }
-              : cardStatus === 'wrong'
-              ? { x: [-10, 10, -8, 8, 0], borderColor: '#f43f5e' }
-              : { scale: 1, borderColor: 'rgba(255, 255, 255, 0.2)' }
-          }
-          transition={{ duration: 0.3 }}
-          className="w-full py-6 px-4 bg-white/10 backdrop-blur-2xl border-2 border-white/20 rounded-3xl shadow-2xl flex flex-col items-center justify-center text-center relative overflow-hidden"
+          animate={{ x: shakeOffset(wrongShake) }}
+          transition={{ duration: 0.24 }}
+          className="w-full"
         >
-          <div className="w-full flex justify-between items-center px-2 mb-2">
-            <span className="text-[10px] text-slate-300 uppercase tracking-widest font-mono font-semibold">
-              Reduce To Single Digit
-            </span>
-            <button
-              onClick={() => setShowCastingOut(!showCastingOut)}
-              className={`px-2 py-1 rounded-lg text-[11px] font-mono font-bold flex items-center space-x-1 transition ${
-                showCastingOut
-                  ? 'bg-amber-400/30 text-amber-200 border border-amber-400/50'
-                  : 'bg-white/10 text-slate-300 hover:text-white'
-              }`}
-              title="Toggle 'Casting out 9s' visual cancellation mode"
-            >
-              {showCastingOut ? <Eye size={12} /> : <EyeOff size={12} />}
-              <span>Cast 9s</span>
-            </button>
-          </div>
-
-          <div className="py-2">{renderNumberDigits()}</div>
-
-          <div className="mt-1 h-5 flex items-center justify-center">
-            <span
-              className={`text-xs font-semibold font-mono transition-colors ${
-                feedbackType === 'correct'
-                  ? 'text-emerald-300'
-                  : feedbackType === 'wrong'
-                  ? 'text-rose-300'
-                  : 'text-slate-300'
-              }`}
-            >
-              {feedbackMsg}
-            </span>
-          </div>
+          <DigitStrip digits={currentNumber} struck={struck} sizeClass={digitSize} />
         </motion.div>
+
+        <div className="mt-3 h-14 w-full">
+          <RootLine root={resolved ? targetRoot : null} sizeClass="text-3xl" />
+        </div>
+
+        <p className={`h-5 text-xs ${FEEDBACK_TONE[feedbackTone]}`} role="status">
+          {feedback}
+        </p>
+
+        <button
+          onClick={() => setAssist(!assist)}
+          aria-pressed={assist}
+          className={`label mt-3 border-b transition-colors ${
+            assist ? 'border-race text-race' : 'border-rule hover:text-chalk'
+          }`}
+        >
+          {assist ? 'Hide casts' : 'Show casts'}
+        </button>
       </div>
 
-      {/* Custom Touch Numpad */}
-      <div className="w-full space-y-2">
-        <div className="grid grid-cols-3 gap-2">
+      <div className="shrink-0 space-y-1.5 pt-3">
+        <div className="grid grid-cols-3 gap-1.5">
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
             <motion.button
               key={num}
-              whileTap={{ scale: 0.92 }}
+              whileTap={{ scale: 0.96 }}
               onClick={() => handleAnswer(num)}
-              className="py-4 rounded-2xl bg-white/5 hover:bg-white/15 border border-white/10 active:bg-blue-600/80 active:text-white font-black text-2xl text-slate-100 shadow-md backdrop-blur-lg font-mono transition"
+              className={`${KEY_CLASS} py-3.5`}
             >
               {num}
             </motion.button>
           ))}
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-1.5">
           <button
-            onClick={onQuit}
-            className="py-3 rounded-2xl bg-white/5 hover:bg-rose-500/20 border border-white/10 text-rose-300 font-bold text-xs transition backdrop-blur-md flex items-center justify-center space-x-1"
+            onClick={quitOrEnd}
+            className="label rounded-sharp border border-rule py-3 transition-colors hover:text-strike"
           >
-            <RotateCcw size={14} />
-            <span>Quit</span>
+            {mode === 'zen' ? 'End' : 'Quit'}
           </button>
-
           <motion.button
-            whileTap={{ scale: 0.92 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => handleAnswer(0)}
-            className="py-3 rounded-2xl bg-white/5 hover:bg-white/15 border border-white/10 active:bg-blue-600/80 active:text-white font-black text-2xl text-slate-100 shadow-md backdrop-blur-lg font-mono transition"
+            className={`${KEY_CLASS} py-3`}
           >
             0
           </motion.button>
-
           <button
             onClick={() => stepBreakdown && onOpenHint(stepBreakdown)}
-            className="py-3 rounded-2xl bg-white/5 hover:bg-amber-500/20 border border-white/10 text-amber-300 font-bold text-xs transition backdrop-blur-md flex items-center justify-center space-x-1"
+            className="label rounded-sharp border border-rule py-3 transition-colors hover:text-race"
           >
-            <Lightbulb size={14} />
-            <span>Hint</span>
+            Hint
           </button>
         </div>
       </div>

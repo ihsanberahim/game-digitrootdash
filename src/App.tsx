@@ -1,5 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { GameMode, GameDifficulty, GameSettings, UserStats, GameHistoryItem, StepBreakdown } from './types';
+import { useState, useEffect } from 'react';
+import {
+  GameMode,
+  GameDifficulty,
+  GameSettings,
+  UserStats,
+  GameHistoryItem,
+  GameSessionResult,
+  StepBreakdown,
+} from './types';
 import {
   loadSettings,
   saveSettings,
@@ -7,8 +15,10 @@ import {
   saveUserStats,
   loadGameHistory,
   saveGameHistory,
+  clearGameHistory,
   defaultStats,
 } from './utils/storage';
+import { calculateAccuracy } from './utils/game';
 import { soundFx } from './utils/audio';
 
 import { MainMenu } from './components/MainMenu';
@@ -18,98 +28,57 @@ import { HintModal } from './components/HintModal';
 import { StatsModal } from './components/StatsModal';
 import { RulesModal } from './components/RulesModal';
 import { SettingsModal } from './components/SettingsModal';
-import { motion } from 'motion/react';
+
+type GameResultView = GameSessionResult & { isNewHighScore: boolean };
 
 export default function App() {
-  // Application view: 'menu' | 'playing'
   const [view, setView] = useState<'menu' | 'playing'>('menu');
-
-  // Active game configuration
   const [activeMode, setActiveMode] = useState<GameMode>('timed');
   const [activeDifficulty, setActiveDifficulty] = useState<GameDifficulty>('medium');
+  const [gameSession, setGameSession] = useState(0);
 
-  // Persistent State
   const [settings, setSettings] = useState<GameSettings>(loadSettings);
   const [stats, setStats] = useState<UserStats>(loadUserStats);
   const [history, setHistory] = useState<GameHistoryItem[]>(loadGameHistory);
 
-  // Modals
   const [showRules, setShowRules] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activeHint, setActiveHint] = useState<StepBreakdown | null>(null);
+  const [lastGameResult, setLastGameResult] = useState<GameResultView | null>(null);
 
-  // Completed game result for GameOverModal
-  const [lastGameResult, setLastGameResult] = useState<{
-    score: number;
-    solved: number;
-    totalAttempts: number;
-    maxStreak: number;
-    timeTaken: number;
-    isNewHighScore: boolean;
-  } | null>(null);
+  const menuShortcutBlocked = showRules || showStats || showSettings;
 
-  // Audio configuration synchronization
   useEffect(() => {
     soundFx.setSoundEnabled(settings.soundEnabled);
     soundFx.setVolume(settings.soundVolume);
     saveSettings(settings);
   }, [settings]);
 
-  // Update theme class on root html or app container
-  const getThemeClass = () => {
-    switch (settings.theme) {
-      case 'neon':
-        return 'bg-[#050814] text-cyan-100 selection:bg-cyan-500';
-      case 'midnight':
-        return 'bg-[#0a0c1a] text-indigo-100 selection:bg-indigo-500';
-      case 'light':
-        return 'bg-slate-900 text-slate-100 selection:bg-sky-500';
-      case 'dark':
-      default:
-        return 'bg-[#0a0a0f] text-slate-100 selection:bg-sky-500';
-    }
-  };
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme;
+  }, [settings.theme]);
 
-  // Sound toggle helper
-  const handleToggleSound = () => {
-    setSettings((prev) => ({ ...prev, soundEnabled: !prev.soundEnabled }));
-  };
-
-  // Start game handler
-  const handleStartGame = (mode: GameMode, difficulty: GameDifficulty = 'medium') => {
+  function handleStartGame(mode: GameMode, difficulty: GameDifficulty = 'medium') {
     soundFx.playClick();
+    setShowRules(false);
+    setShowStats(false);
+    setShowSettings(false);
+    setActiveHint(null);
     setActiveMode(mode);
     setActiveDifficulty(difficulty);
+    setGameSession((session) => session + 1);
     setLastGameResult(null);
     setView('playing');
-  };
+  }
 
-  // Finish game handler
-  const handleFinishGame = (result: {
-    score: number;
-    solved: number;
-    totalAttempts: number;
-    maxStreak: number;
-    timeTaken: number;
-  }) => {
-    let isNewHighScore = false;
-
-    // Check if score or time is personal best
+  function handleFinishGame(result: GameSessionResult) {
     const currentModeStats = stats[activeMode];
+    const isNewHighScore =
+      activeMode === 'sprint'
+        ? !currentModeStats.fastestTime || result.timeTaken < currentModeStats.fastestTime
+        : result.score > currentModeStats.highScore;
 
-    if (activeMode === 'sprint') {
-      const currentFastest = currentModeStats.fastestTime;
-      if (!currentFastest || result.timeTaken < currentFastest) {
-        isNewHighScore = true;
-      }
-    } else {
-      if (result.score > currentModeStats.highScore) {
-        isNewHighScore = true;
-      }
-    }
-
-    // Update stats
     const updatedModeStats = {
       ...currentModeStats,
       highScore: Math.max(currentModeStats.highScore, result.score),
@@ -132,146 +101,87 @@ export default function App() {
     setStats(newStats);
     saveUserStats(newStats);
 
-    // Save game to history
-    const accuracy =
-      result.totalAttempts > 0
-        ? Math.round((result.solved / result.totalAttempts) * 100)
-        : 100;
-
     const newHistory = saveGameHistory({
       mode: activeMode,
       score: result.score,
       solved: result.solved,
-      accuracy,
+      accuracy: calculateAccuracy(result.solved, result.totalAttempts),
       maxStreak: result.maxStreak,
     });
     setHistory(newHistory);
+    setLastGameResult({ ...result, isNewHighScore });
+  }
 
-    setLastGameResult({
-      ...result,
-      isNewHighScore,
-    });
-  };
-
-  // Reset stats
-  const handleResetStats = () => {
+  function handleResetStats() {
     setStats(defaultStats);
     saveUserStats(defaultStats);
-    localStorage.removeItem('digit_root_dash_history_v1');
+    clearGameHistory();
     setHistory([]);
-  };
+  }
 
   return (
-    <div className={`min-h-screen h-full flex flex-col font-sans antialiased no-select relative overflow-hidden ${getThemeClass()}`}>
-      {/* Ambient Frosted Glass Background Orbs */}
-      <motion.div
-        animate={{
-          x: [0, 50, 0, -50, 0],
-          y: [0, 30, -30, 30, 0],
-          scale: [1, 1.1, 1, 0.9, 1],
-        }}
-        transition={{
-          duration: 20,
-          repeat: Infinity,
-          ease: "linear"
-        }}
-        className="fixed top-[-10%] left-[-10%] w-[60%] h-[50%] rounded-full bg-purple-900/30 blur-[120px] pointer-events-none z-0"
-      />
-      <motion.div
-        animate={{
-          x: [0, -40, 40, -40, 0],
-          y: [0, -50, 0, 50, 0],
-          scale: [1, 0.9, 1.1, 1, 1],
-        }}
-        transition={{
-          duration: 25,
-          repeat: Infinity,
-          ease: "linear"
-        }}
-        className="fixed bottom-[-10%] right-[-10%] w-[60%] h-[50%] rounded-full bg-blue-900/30 blur-[120px] pointer-events-none z-0"
-      />
-      <motion.div
-        animate={{
-          x: [0, 30, -30, 30, 0],
-          y: [0, -30, 30, -30, 0],
-          scale: [1, 1.2, 0.9, 1.1, 1],
-        }}
-        transition={{
-          duration: 22,
-          repeat: Infinity,
-          ease: "linear"
-        }}
-        className="fixed top-[30%] right-[5%] w-[40%] h-[40%] rounded-full bg-emerald-900/20 blur-[100px] pointer-events-none z-0"
-      />
+    <div className="no-select flex min-h-[100dvh] flex-col text-chalk antialiased">
+      <main className="relative mx-auto flex w-full max-w-md flex-1 flex-col px-5 pb-5 pt-5">
+        {view === 'menu' ? (
+          <MainMenu
+            stats={stats}
+            settings={settings}
+            onStartGame={handleStartGame}
+            onOpenRules={() => setShowRules(true)}
+            onOpenStats={() => setShowStats(true)}
+            onOpenSettings={() => setShowSettings(true)}
+            shortcutBlocked={menuShortcutBlocked}
+          />
+        ) : (
+          <GameBoard
+            key={gameSession}
+            mode={activeMode}
+            difficulty={activeDifficulty}
+            settings={settings}
+            gameEnded={Boolean(lastGameResult)}
+            inputLocked={Boolean(lastGameResult || activeHint)}
+            onFinishGame={handleFinishGame}
+            onQuit={() => setView('menu')}
+            onOpenHint={(breakdown) => setActiveHint(breakdown)}
+          />
+        )}
 
-      <div className="relative z-10 flex flex-col min-h-screen h-full">
-        <main className="flex-1 w-full max-w-md mx-auto p-4 flex flex-col justify-between items-center relative">
-          {view === 'menu' ? (
-            <MainMenu
-              stats={stats}
-              settings={settings}
-              onStartGame={handleStartGame}
-              onOpenRules={() => setShowRules(true)}
-              onOpenStats={() => setShowStats(true)}
-              onOpenSettings={() => setShowSettings(true)}
-              onToggleSound={handleToggleSound}
-            />
-          ) : (
-            <GameBoard
-              mode={activeMode}
-              difficulty={activeDifficulty}
-              settings={settings}
-              onFinishGame={handleFinishGame}
-              onQuit={() => setView('menu')}
-              onOpenHint={(breakdown) => setActiveHint(breakdown)}
-            />
-          )}
+        {lastGameResult && (
+          <GameOverModal
+            mode={activeMode}
+            result={lastGameResult}
+            isNewHighScore={lastGameResult.isNewHighScore}
+            onPlayAgain={() => handleStartGame(activeMode, activeDifficulty)}
+            onHome={() => {
+              setLastGameResult(null);
+              setView('menu');
+            }}
+          />
+        )}
 
-          {/* Game Over Modal */}
-          {lastGameResult && (
-            <GameOverModal
-              mode={activeMode}
-              result={lastGameResult}
-              isNewHighScore={lastGameResult.isNewHighScore}
-              onPlayAgain={() => handleStartGame(activeMode, activeDifficulty)}
-              onHome={() => {
-                setLastGameResult(null);
-                setView('menu');
-              }}
-            />
-          )}
+        {activeHint && (
+          <HintModal breakdown={activeHint} onClose={() => setActiveHint(null)} />
+        )}
 
-          {/* Hint Modal */}
-          {activeHint && (
-            <HintModal
-              breakdown={activeHint}
-              onClose={() => setActiveHint(null)}
-            />
-          )}
+        {showRules && <RulesModal onClose={() => setShowRules(false)} />}
 
-          {/* Rules Modal */}
-          {showRules && <RulesModal onClose={() => setShowRules(false)} />}
+        {showStats && (
+          <StatsModal
+            stats={stats}
+            history={history}
+            onClose={() => setShowStats(false)}
+          />
+        )}
 
-          {/* Stats Modal */}
-          {showStats && (
-            <StatsModal
-              stats={stats}
-              history={history}
-              onClose={() => setShowStats(false)}
-            />
-          )}
-
-          {/* Settings Modal */}
-          {showSettings && (
-            <SettingsModal
-              settings={settings}
-              onUpdateSettings={setSettings}
-              onResetStats={handleResetStats}
-              onClose={() => setShowSettings(false)}
-            />
-          )}
-        </main>
-      </div>
+        {showSettings && (
+          <SettingsModal
+            settings={settings}
+            onUpdateSettings={setSettings}
+            onResetStats={handleResetStats}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
+      </main>
     </div>
   );
 }

@@ -1,176 +1,167 @@
-import React, { useState } from 'react';
-import { Zap, Timer, Heart, Sparkles, BookOpen, Trophy, Settings } from 'lucide-react';
-import { GameMode, UserStats, GameDifficulty } from '../types';
+import React, { useEffect, useState } from 'react';
+import { GameMode, GameDifficulty, GameSettings, UserStats } from '../types';
+import { shouldStartFromMenuShortcut } from '../utils/game';
+import { CollapseDemo } from './CollapseDemo';
 
 interface MainMenuProps {
   stats: UserStats;
+  settings: GameSettings;
   onStartGame: (mode: GameMode, difficulty?: GameDifficulty) => void;
   onOpenRules: () => void;
   onOpenStats: () => void;
   onOpenSettings: () => void;
+  shortcutBlocked?: boolean;
 }
+
+const MODES: Array<{ id: GameMode; name: string; blurb: string }> = [
+  { id: 'timed', name: 'Timed', blurb: 'Score as many roots as the clock allows.' },
+  { id: 'sprint', name: 'Sprint', blurb: 'Race a fixed set of roots. Fastest time wins.' },
+  { id: 'survival', name: 'Survival', blurb: 'Three lives. Numbers keep getting longer.' },
+  { id: 'zen', name: 'Zen', blurb: 'No clock. You choose the digit length.' },
+];
+
+const DIFFICULTIES: Array<{ id: GameDifficulty; digits: string }> = [
+  { id: 'easy', digits: '2–3' },
+  { id: 'medium', digits: '4–5' },
+  { id: 'hard', digits: '6–8' },
+  { id: 'master', digits: '9–12' },
+];
 
 export const MainMenu: React.FC<MainMenuProps> = ({
   stats,
+  settings,
   onStartGame,
   onOpenRules,
   onOpenStats,
   onOpenSettings,
+  shortcutBlocked = false,
 }) => {
-  const [selectedDifficulty, setSelectedDifficulty] = useState<GameDifficulty>('medium');
+  const [mode, setMode] = useState<GameMode>('timed');
+  const [difficulty, setDifficulty] = useState<GameDifficulty>('medium');
+
+  const active = MODES.find((m) => m.id === mode)!;
+  const zenDigits = DIFFICULTIES.find((d) => d.id === difficulty)!.digits;
+
+  const setup: Record<GameMode, string> = {
+    timed: `${settings.timerDuration} seconds`,
+    sprint: `${settings.sprintTarget} roots`,
+    survival: '3 lives',
+    zen: `${zenDigits} digits`,
+  };
+
+  const best: Record<GameMode, string> = {
+    timed: stats.timed.highScore ? `${stats.timed.highScore} pts` : 'no run yet',
+    sprint: stats.sprint.fastestTime ? `${stats.sprint.fastestTime}s` : 'no run yet',
+    survival: stats.survival.highScore ? `${stats.survival.highScore} pts` : 'no run yet',
+    zen: stats.zen.totalSolved ? `${stats.zen.totalSolved} solved` : 'no run yet',
+  };
+
+  const start = () => onStartGame(mode, difficulty);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        shouldStartFromMenuShortcut(
+          e.key,
+          target?.tagName ?? '',
+          shortcutBlocked || Boolean(target?.isContentEditable),
+        )
+      ) {
+        onStartGame(mode, difficulty);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [difficulty, mode, onStartGame, shortcutBlocked]);
 
   return (
-    <div className="w-full h-full flex flex-col justify-between space-y-4 flex-1">
-      
-      {/* 1. Hero Section */}
-      <div className="w-full flex flex-col items-center justify-center space-y-3 shrink-0 py-4">
-        <div className="w-16 h-16 rounded-2xl bg-sky-500 flex items-center justify-center font-black text-slate-950 text-4xl shadow-lg shadow-sky-500/20">
-          ∑
-        </div>
-        <div className="text-center">
-          <h1 className="font-extrabold text-3xl tracking-wide text-white">
-            DIGIT ROOT DASH
-          </h1>
-          <p className="text-sm text-slate-400 font-mono tracking-wider uppercase mt-1">Math Speed Game</p>
-        </div>
-      </div>
+    <div className="flex flex-1 flex-col">
+      <header className="shrink-0">
+        <h1 className="wordmark text-[clamp(3rem,17vw,4.5rem)] text-chalk">
+          Digit Root
+          <br />
+          Dash
+        </h1>
+        <div className="mt-2 h-px w-full bg-rule" />
+        <p className="label mt-2">Cast out nines · reduce to one digit</p>
+      </header>
 
-      {/* 2. Select Mode Section */}
-      <div className="w-full flex-1 flex flex-col justify-end min-h-[220px]">
-        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1 block mb-3 text-center">Swipe to select mode</span>
+      <section className="flex flex-1 flex-col justify-center py-4">
+        <CollapseDemo />
+      </section>
 
-        <div className="-mx-4 flex overflow-x-auto space-x-4 pb-6 snap-x snap-mandatory hide-scrollbar items-center px-[10%] sm:px-[15%]">
-          
-          {/* Timed Attack */}
-          <div className="snap-center shrink-0 w-full max-w-[280px] p-5 rounded-3xl bg-blue-600 shadow-xl shadow-blue-900/20 border border-blue-500/50 flex flex-col min-h-[180px]">
-            <div className="flex justify-between items-start mb-auto">
-              <div className="p-2.5 rounded-xl bg-black/20 text-white">
-                <Zap size={28} />
-              </div>
-              <span className="text-[10px] uppercase font-bold tracking-wider bg-black/20 px-2.5 py-1 rounded-lg border border-white/20">
-                60s
-              </span>
-            </div>
-            <div className="pt-4">
-              <div className="text-xl font-extrabold mb-1 text-white">Timed Attack</div>
-              <div className="text-xs text-blue-100 font-normal mb-4">Score as much as possible in 60s</div>
-              <button
-                onClick={() => onStartGame('timed')}
-                className="w-full py-3 rounded-xl bg-white text-blue-900 font-bold text-sm hover:bg-blue-50 transition active:scale-95 shadow-md"
-              >
-                Play Mode
-              </button>
-            </div>
-          </div>
+      <section className="shrink-0">
+        <nav className="flex border-y border-rule" aria-label="Game mode">
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setMode(m.id)}
+              aria-pressed={mode === m.id}
+              className={`flex-1 border-b-2 py-2.5 text-xs font-medium tracking-wide transition-colors ${
+                mode === m.id
+                  ? 'border-race text-chalk'
+                  : 'border-transparent text-dim hover:text-chalk'
+              }`}
+            >
+              {m.name}
+            </button>
+          ))}
+        </nav>
 
-          {/* Sprint Challenge */}
-          <div className="snap-center shrink-0 w-full max-w-[280px] p-5 rounded-3xl bg-emerald-600 shadow-xl shadow-emerald-900/20 border border-emerald-500/50 flex flex-col min-h-[180px]">
-            <div className="flex justify-between items-start mb-auto">
-              <div className="p-2.5 rounded-xl bg-black/20 text-white">
-                <Timer size={28} />
-              </div>
-              <span className="text-[10px] uppercase font-bold tracking-wider bg-black/20 px-2.5 py-1 rounded-lg border border-white/20">
-                20 Solves
-              </span>
-            </div>
-            <div className="pt-4">
-              <div className="text-xl font-extrabold mb-1 text-white">Sprint Challenge</div>
-              <div className="text-xs text-emerald-100 font-normal mb-4">Solve 20 numbers fast</div>
-              <button
-                onClick={() => onStartGame('sprint')}
-                className="w-full py-3 rounded-xl bg-white text-emerald-900 font-bold text-sm hover:bg-emerald-50 transition active:scale-95 shadow-md"
-              >
-                Play Mode
-              </button>
-            </div>
-          </div>
+        <div className="flex min-h-[72px] flex-col gap-2 py-3">
+          <p className="text-sm text-chalk">{active.blurb}</p>
 
-          {/* Survival Mode */}
-          <div className="snap-center shrink-0 w-full max-w-[280px] p-5 rounded-3xl bg-rose-600 shadow-xl shadow-rose-900/20 border border-rose-500/50 flex flex-col min-h-[180px]">
-            <div className="flex justify-between items-start mb-auto">
-              <div className="p-2.5 rounded-xl bg-black/20 text-white">
-                <Heart size={28} />
-              </div>
-              <span className="text-[10px] uppercase font-bold tracking-wider bg-black/20 px-2.5 py-1 rounded-lg border border-white/20">
-                3 Lives
-              </span>
+          {mode === 'zen' && (
+            <div className="flex gap-2">
+              {DIFFICULTIES.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => setDifficulty(d.id)}
+                  aria-pressed={difficulty === d.id}
+                  className={`flex-1 rounded-sharp border px-1 py-1.5 text-[11px] capitalize transition ${
+                    difficulty === d.id
+                      ? 'border-chalk bg-key text-chalk'
+                      : 'border-rule text-dim hover:text-chalk'
+                  }`}
+                >
+                  {d.id}
+                </button>
+              ))}
             </div>
-            <div className="pt-4">
-              <div className="text-xl font-extrabold mb-1 text-white">Survival Mode</div>
-              <div className="text-xs text-rose-100 font-normal mb-4">3 lives, increasing length</div>
-              <button
-                onClick={() => onStartGame('survival')}
-                className="w-full py-3 rounded-xl bg-white text-rose-900 font-bold text-sm hover:bg-rose-50 transition active:scale-95 shadow-md"
-              >
-                Play Mode
-              </button>
-            </div>
-          </div>
+          )}
 
-          {/* Zen Practice */}
-          <div className="snap-center shrink-0 w-full max-w-[280px] p-5 rounded-3xl bg-white/5 backdrop-blur-xl border border-white/10 shadow-xl flex flex-col min-h-[180px]">
-            <div className="flex justify-between items-start mb-auto">
-              <div className="p-2.5 rounded-xl bg-white/10 text-amber-400">
-                <Sparkles size={28} />
-              </div>
-              <span className="text-[10px] uppercase font-bold tracking-wider bg-black/20 px-2.5 py-1 rounded-lg border border-white/20 text-slate-300">
-                Untimed
-              </span>
-            </div>
-            <div className="pt-4">
-              <div className="text-xl font-extrabold mb-2 text-white">Zen Practice</div>
-              <div className="grid grid-cols-4 gap-1 mb-3">
-                {(['easy', 'medium', 'hard', 'master'] as GameDifficulty[]).map((diff) => (
-                  <button
-                    key={diff}
-                    onClick={() => setSelectedDifficulty(diff)}
-                    className={`py-1.5 text-[10px] font-bold rounded-lg capitalize transition border ${
-                      selectedDifficulty === diff
-                        ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md'
-                        : 'bg-white/10 text-slate-300 border-white/10 hover:bg-white/20'
-                    }`}
-                  >
-                    {diff}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={() => onStartGame('zen', selectedDifficulty)}
-                className="w-full py-3 rounded-xl bg-white/20 hover:bg-white/30 text-white font-bold text-sm transition active:scale-95 shadow-md"
-              >
-                Start Practice
-              </button>
-            </div>
+          <div className="flex justify-between text-xs text-dim">
+            <span>{setup[mode]}</span>
+            <span>
+              best <span className="font-num text-chalk">{best[mode]}</span>
+            </span>
           </div>
         </div>
-      </div>
-
-      {/* 3. Footer Section */}
-      <div className="w-full grid grid-cols-4 gap-2 pt-4 mt-auto shrink-0">
-        <button
-          onClick={onOpenStats}
-          className="col-span-1 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-amber-300 hover:text-amber-200 transition border border-white/10 flex flex-col items-center justify-center space-y-1"
-        >
-          <Trophy size={20} />
-          <span className="text-[9px] uppercase font-bold tracking-wider">Stats</span>
-        </button>
 
         <button
-          onClick={onOpenRules}
-          className="col-span-2 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-sky-300 hover:text-sky-200 transition border border-white/10 flex flex-col items-center justify-center space-y-1"
+          onClick={start}
+          className="w-full rounded-sharp bg-chalk py-3.5 text-ink transition active:scale-[0.99]"
         >
-          <BookOpen size={20} />
-          <span className="text-[9px] uppercase font-bold tracking-wider">How to Play</span>
+          <span className="wordmark text-3xl">Start {active.name}</span>
         </button>
 
-        <button
-          onClick={onOpenSettings}
-          className="col-span-1 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition border border-white/10 flex flex-col items-center justify-center space-y-1"
-        >
-          <Settings size={20} />
-          <span className="text-[9px] uppercase font-bold tracking-wider">Settings</span>
-        </button>
-      </div>
+        <div className="mt-4 flex divide-x divide-rule border-t border-rule pt-3">
+          {[
+            { label: 'Stats', action: onOpenStats },
+            { label: 'How to play', action: onOpenRules },
+            { label: 'Settings', action: onOpenSettings },
+          ].map((item) => (
+            <button
+              key={item.label}
+              onClick={item.action}
+              className="label flex-1 py-1 transition-colors hover:text-chalk"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </section>
     </div>
   );
 };

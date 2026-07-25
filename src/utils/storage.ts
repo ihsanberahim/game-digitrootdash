@@ -1,4 +1,4 @@
-import { GameSettings, UserStats, GameHistoryItem } from '../types';
+import { GameSettings, GameTheme, UserStats, GameHistoryItem, ModeStats } from '../types';
 
 const SETTINGS_KEY = 'digit_root_dash_settings_v1';
 const STATS_KEY = 'digit_root_dash_stats_v1';
@@ -10,63 +10,93 @@ export const defaultSettings: GameSettings = {
   hapticsEnabled: true,
   timerDuration: 60,
   sprintTarget: 20,
-  theme: 'dark',
+  theme: 'board',
   autoSubmit: true,
 };
 
+const LEGACY_THEMES: Record<string, GameTheme> = {
+  dark: 'board',
+  midnight: 'board',
+  neon: 'led',
+  light: 'paper',
+};
+
+function emptyModeStats(): ModeStats {
+  return {
+    highScore: 0,
+    maxStreak: 0,
+    totalSolved: 0,
+    totalAttempts: 0,
+    gamesPlayed: 0,
+  };
+}
+
 export const defaultStats: UserStats = {
-  timed: { highScore: 0, maxStreak: 0, totalSolved: 0, totalAttempts: 0, gamesPlayed: 0 },
-  sprint: { highScore: 0, maxStreak: 0, totalSolved: 0, totalAttempts: 0, gamesPlayed: 0 },
-  survival: { highScore: 0, maxStreak: 0, totalSolved: 0, totalAttempts: 0, gamesPlayed: 0 },
-  zen: { highScore: 0, maxStreak: 0, totalSolved: 0, totalAttempts: 0, gamesPlayed: 0 },
+  timed: emptyModeStats(),
+  sprint: emptyModeStats(),
+  survival: emptyModeStats(),
+  zen: emptyModeStats(),
   totalPoints: 0,
   level: 1,
 };
 
-export function loadSettings(): GameSettings {
+function readStorage<T>(key: string, fallback: T, parse: (raw: string) => T): T {
   try {
-    const data = localStorage.getItem(SETTINGS_KEY);
-    return data ? { ...defaultSettings, ...JSON.parse(data) } : defaultSettings;
+    const data = localStorage.getItem(key);
+    return data ? parse(data) : fallback;
   } catch {
-    return defaultSettings;
+    return fallback;
   }
+}
+
+function writeStorage(key: string, value: unknown, label: string): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.warn(`Failed to save ${label} to localStorage`, e);
+  }
+}
+
+export function loadSettings(): GameSettings {
+  return readStorage(SETTINGS_KEY, defaultSettings, (raw) => {
+    const stored = { ...defaultSettings, ...JSON.parse(raw) } as GameSettings;
+    return {
+      ...stored,
+      theme: LEGACY_THEMES[stored.theme] ?? stored.theme,
+    };
+  });
 }
 
 export function saveSettings(settings: GameSettings): void {
-  try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  } catch (e) {
-    console.warn('Failed to save settings to localStorage', e);
-  }
+  writeStorage(SETTINGS_KEY, settings, 'settings');
 }
 
 export function loadUserStats(): UserStats {
-  try {
-    const data = localStorage.getItem(STATS_KEY);
-    return data ? { ...defaultStats, ...JSON.parse(data) } : defaultStats;
-  } catch {
-    return defaultStats;
-  }
+  return readStorage(STATS_KEY, defaultStats, (raw) => ({
+    ...defaultStats,
+    ...JSON.parse(raw),
+  }));
 }
 
 export function saveUserStats(stats: UserStats): void {
-  try {
-    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
-  } catch (e) {
-    console.warn('Failed to save stats to localStorage', e);
-  }
+  writeStorage(STATS_KEY, stats, 'stats');
 }
 
 export function loadGameHistory(): GameHistoryItem[] {
+  return readStorage(HISTORY_KEY, [], (raw) => JSON.parse(raw));
+}
+
+export function clearGameHistory(): void {
   try {
-    const data = localStorage.getItem(HISTORY_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
+    localStorage.removeItem(HISTORY_KEY);
+  } catch (e) {
+    console.warn('Failed to clear game history', e);
   }
 }
 
-export function saveGameHistory(item: Omit<GameHistoryItem, 'id' | 'date'>): GameHistoryItem[] {
+export function saveGameHistory(
+  item: Omit<GameHistoryItem, 'id' | 'date'>,
+): GameHistoryItem[] {
   try {
     const history = loadGameHistory();
     const newItem: GameHistoryItem = {
@@ -74,7 +104,7 @@ export function saveGameHistory(item: Omit<GameHistoryItem, 'id' | 'date'>): Gam
       id: Math.random().toString(36).substring(2, 9),
       date: new Date().toISOString(),
     };
-    const updated = [newItem, ...history].slice(0, 30); // Keep last 30 games
+    const updated = [newItem, ...history].slice(0, 30);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
     return updated;
   } catch (e) {
