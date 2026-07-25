@@ -1,0 +1,6 @@
+{
+  "name": "Digit Root Dash",
+  "description": "Fast-paced mental math speed game to reduce multi-digit numbers to single digit sums with multiple modes, statistics, and interactive tutorials.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
